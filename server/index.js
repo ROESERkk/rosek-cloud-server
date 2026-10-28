@@ -110,14 +110,9 @@ async function removeFile(filePath) {
   if (!filePath) return;
   await fs.rm(filePath, { force: true }).catch(() => {});
 }
-
-function safeJobId(id) {
-  return /^[0-9a-f-]{36}$/i.test(id);
-}
-
 // Expired files are not deleted while their downloads are active.
-function cleanExpiredJobs() {
-  const now = Date.now();
+function safeJobId(id) {
+  return /^[0-9a-f-]{36}$/i.test(id
 
   for (const [id, job] of jobs) {
     if (
