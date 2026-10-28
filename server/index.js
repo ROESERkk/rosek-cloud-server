@@ -1,3 +1,4 @@
+
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -227,7 +228,7 @@ async function convertVideo(job, options) {
 
   args.push(
     '-c:v', 'libx264',
-    '-preset', 'veryfast',
+    '-preset', 'ultrafast',
     '-crf', quality,
     '-pix_fmt', 'yuv420p'
   );
@@ -429,4 +430,3 @@ app.use((error, req, res, _next) => {
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`ROSEK Cloud Server escuchando en puerto ${PORT}`);
 });
-
