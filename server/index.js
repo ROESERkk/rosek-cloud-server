@@ -110,9 +110,14 @@ async function removeFile(filePath) {
   if (!filePath) return;
   await fs.rm(filePath, { force: true }).catch(() => {});
 }
-// Expired files are not deleted while their downloads are active.
+
 function safeJobId(id) {
-  return /^[0-9a-f-]{36}$/i.test(id
+  return /^[0-9a-f-]{36}$/i.test(id);
+}
+
+// Expired files are not deleted while their downloads are active.
+function cleanExpiredJobs() {
+  const now = Date.now();
 
   for (const [id, job] of jobs) {
     if (
@@ -130,9 +135,7 @@ function safeJobId(id) {
 
 const cleanupTimer = setInterval(cleanExpiredJobs, 15_000);
 cleanupTimer.unref();
-function safeJobId(id) {
-  return /^[0-9a-f-]{36}$/i.test(id);
-}
+
 app.get('/health', (_req, res) => {
   res.json({
     ok: true,
