@@ -11,26 +11,15 @@ const app = express();
 const PORT = Number(process.env.PORT || 8080);
 const TMP = '/tmp/rosek';
 
-const MAX_MB = Math.min(
-  100,
-  Math.max(1, Number(process.env.MAX_UPLOAD_MB || 50))
-);
-const RETENTION_MINUTES = Math.max(
-  1,
-  Number(process.env.RETENTION_MINUTES || 10)
-);
-const JOB_TIMEOUT_MS = Math.max(
-  60_000,
-  Number(process.env.JOB_TIMEOUT_MS || 30 * 60_000)
-);
-const MAX_CONCURRENT = Math.max(
-  1,
-  Math.min(2, Number(process.env.MAX_CONCURRENT_JOBS || 1))
-);
+const MAX_MB = Math.min(100, Math.max(1, Number(process.env.MAX_UPLOAD_MB || 50)));
+const RETENTION_MINUTES = Math.max(1, Number(process.env.RETENTION_MINUTES || 10));
+const JOB_TIMEOUT_MS = Math.max(60_000, Number(process.env.JOB_TIMEOUT_MS || 30 * 60_000));
+const MAX_CONCURRENT = Math.max(1, Math.min(2, Number(process.env.MAX_CONCURRENT_JOBS || 1)));
 
-const allowedOrigins = (
-  process.env.CORS_ORIGIN || '*'
-).split(',').map(value => value.trim()).filter(Boolean);
+const allowedOrigins = (process.env.CORS_ORIGIN || '*')
+  .split(',')
+  .map(value => value.trim())
+  .filter(Boolean);
 
 const allowedExtensions = new Set([
   '.mp4', '.mov', '.mkv', '.webm', '.m4v', '.avi'
@@ -49,21 +38,19 @@ app.use(helmet({
 
 app.use(cors({
   origin(origin, callback) {
-    if (
-      !origin ||
-      allowedOrigins.includes('*') ||
-      allowedOrigins.includes(origin)
-    ) {
+    if (!origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
-
     return callback(new Error('Origen no permitido.'));
   }
 }));
 
 app.use(express.json({ limit: '16kb' }));
 
-// Reserve capacity before accepting a large upload.
+function safeJobId(id) {
+  return /^[0-9a-f-]{36}$/i.test(id);
+}
+
 function reserveSlot(req, res, next) {
   if (activeJobs >= MAX_CONCURRENT) {
     return res.status(429).json({
@@ -92,14 +79,12 @@ const upload = multer({
     fieldSize: 1024
   },
   fileFilter(_req, file, callback) {
-    const extension = path.extname(
-      file.originalname || ''
-    ).toLowerCase();
+    const extension = path.extname(file.originalname || '').toLowerCase();
 
     if (!allowedExtensions.has(extension)) {
-      return callback(
-        new Error('Formato no admitido. Usá MP4, MOV, MKV, WebM, M4V o AVI.')
-      );
+      return callback(new Error(
+        'Formato no admitido. Usá MP4, MOV, MKV, WebM, M4V o AVI.'
+      ));
     }
 
     callback(null, true);
@@ -111,11 +96,6 @@ async function removeFile(filePath) {
   await fs.rm(filePath, { force: true }).catch(() => {});
 }
 
-function safeJobId(id) {
-  return /^[0-9a-f-]{36}$/i.test(id);
-}
-
-// Expired files are not deleted while their downloads are active.
 function cleanExpiredJobs() {
   const now = Date.now();
 
@@ -194,9 +174,7 @@ app.post(
       createdAt: Date.now(),
       inputPath: req.file.path,
       outputPath,
-      originalName: path.basename(
-        req.file.originalname || 'video'
-      ).slice(0, 100),
+      originalName: path.basename(req.file.originalname || 'video').slice(0, 100),
       expiresAt: null,
       error: null,
       downloads: 0
@@ -204,7 +182,6 @@ app.post(
 
     jobs.set(id, job);
 
-    // Return the job ID immediately; conversion continues in the background.
     res.status(202).json({
       id,
       status: 'queued',
@@ -224,9 +201,7 @@ app.post(
       job.expiresAt = Date.now() + RETENTION_MINUTES * 60_000;
     } catch (error) {
       job.status = 'failed';
-      job.error = String(
-        error?.message || 'La conversión falló.'
-      ).slice(0, 800);
+      job.error = String(error?.message || 'La conversión falló.').slice(0, 800);
       job.expiresAt = Date.now() + 60_000;
       await removeFile(outputPath);
     } finally {
@@ -248,9 +223,7 @@ async function convertVideo(job, options) {
     '-map', '0:v:0'
   ];
 
-  if (audio) {
-    args.push('-map', '0:a?');
-  }
+  if (audio) args.push('-map', '0:a?');
 
   args.push(
     '-c:v', 'libx264',
@@ -259,9 +232,7 @@ async function convertVideo(job, options) {
     '-pix_fmt', 'yuv420p'
   );
 
-  if (fps !== 'source') {
-    args.push('-r', fps);
-  }
+  if (fps !== 'source') args.push('-r', fps);
 
   if (size !== 'source') {
     const [width, height] = size.split('x').map(Number);
@@ -283,28 +254,28 @@ async function convertVideo(job, options) {
     '-progress', 'pipe:2',
     '-nostats',
     '-movflags', '+faststart',
-    outputPathFor(job)
+    job.outputPath
   );
 
   await new Promise((resolve, reject) => {
     let stderr = '';
     let durationSeconds = 0;
     let settled = false;
+    let timedOut = false;
 
     const proc = spawn('ffmpeg', args, {
       stdio: ['ignore', 'ignore', 'pipe']
     });
 
     const timeout = setTimeout(() => {
+      timedOut = true;
       proc.kill('SIGKILL');
-      finish(new Error('La conversión superó el tiempo máximo permitido.'));
     }, JOB_TIMEOUT_MS);
 
     function finish(error) {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
-
       if (error) reject(error);
       else resolve();
     }
@@ -315,7 +286,7 @@ async function convertVideo(job, options) {
       stderr = (stderr + chunk).slice(-12_000);
 
       const durationMatch = stderr.match(
-        /Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/ 
+        /Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/
       );
 
       if (durationMatch) {
@@ -325,12 +296,12 @@ async function convertVideo(job, options) {
           Number(durationMatch[3]);
       }
 
-      const timeMatch = chunk.match(
+      const timeMatches = chunk.match(
         /out_time=(\d+):(\d+):(\d+(?:\.\d+)?)/g
       );
 
-      if (timeMatch && durationSeconds > 0) {
-        const last = timeMatch[timeMatch.length - 1].match(
+      if (timeMatches && durationSeconds > 0) {
+        const last = timeMatches[timeMatches.length - 1].match(
           /out_time=(\d+):(\d+):(\d+(?:\.\d+)?)/
         );
 
@@ -351,20 +322,17 @@ async function convertVideo(job, options) {
     proc.on('error', error => finish(error));
 
     proc.on('close', code => {
-      if (code === 0) {
+      if (timedOut) {
+        finish(new Error('La conversión superó el tiempo máximo permitido.'));
+      } else if (code === 0) {
         finish();
       } else {
         finish(new Error(
-          stderr.slice(-1000) ||
-          `FFmpeg terminó con código ${code}.`
+          stderr.slice(-1000) || `FFmpeg terminó con código ${code}.`
         ));
       }
     });
   });
-}
-
-function outputPathFor(job) {
-  return job.outputPath;
 }
 
 app.get('/api/jobs/:id', (req, res) => {
@@ -461,3 +429,4 @@ app.use((error, req, res, _next) => {
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`ROSEK Cloud Server escuchando en puerto ${PORT}`);
 });
+
