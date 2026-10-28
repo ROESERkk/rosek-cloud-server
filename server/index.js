@@ -1,4 +1,3 @@
-
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -136,7 +135,9 @@ function cleanExpiredJobs() {
 
 const cleanupTimer = setInterval(cleanExpiredJobs, 15_000);
 cleanupTimer.unref();
-
+function safeJobId(id) {
+  return /^[0-9a-f-]{36}$/i.test(id);
+}
 app.get('/health', (_req, res) => {
   res.json({
     ok: true,
